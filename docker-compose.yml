@@ -17,6 +17,10 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    # Expose Mongo to the host so tools like Compass can connect. Fine for
+    # local dev; a real deployment would keep this internal and add auth.
+    ports:
+      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
