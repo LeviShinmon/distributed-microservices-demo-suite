@@ -4,7 +4,7 @@ FROM gcc:13 AS build
 WORKDIR /src
 COPY monitor.c ./
 
-RUN gcc -Wall -Wextra -O2 -pthread -o /out/monitor monitor.c
+RUN mkdir -p /out && gcc -Wall -Wextra -O2 -pthread -o /out/monitor monitor.c
 
 # --- run stage ---
 FROM debian:bookworm-slim

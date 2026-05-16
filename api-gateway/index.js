@@ -24,6 +24,7 @@ const PROXY_TIMEOUT_MS = parseInt(process.env.PROXY_TIMEOUT_MS || '5000', 10);
 
 const routes = {
   '/generate': process.env.INVOICE_SERVICE_URL     || 'http://localhost:8081',
+  '/example':  process.env.INVOICE_SERVICE_URL     || 'http://localhost:8081',
   '/metrics':  process.env.PERFORMANCE_MONITOR_URL || 'http://localhost:8082',
   '/status':   process.env.HEALTH_NODE_URL         || 'http://localhost:8083',
 };

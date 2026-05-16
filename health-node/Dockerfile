@@ -6,7 +6,7 @@ COPY go.mod ./
 COPY main.go ./
 
 # CGO off so we get a static binary that runs in scratch/distroless.
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/health-node .
+RUN mkdir -p /out && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/health-node .
 
 # --- run stage ---
 FROM gcr.io/distroless/static-debian12
