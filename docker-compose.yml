@@ -1,0 +1,88 @@
+# Distributed Microservices Demo Suite — full local stack.
+#
+# Quickstart:
+#   docker compose up --build
+#
+# Then in another terminal:
+#   curl http://localhost:8080/health
+#   curl http://localhost:8080/status
+#   curl http://localhost:8080/metrics
+#   curl "http://localhost:8080/generate?name=Adni" -o report.pdf
+#
+# Or run the scripted walkthrough:
+#   ./scripts/demo.sh
+
+services:
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    # Expose Mongo to the host so tools like Compass can connect. Fine for
+    # local dev; a real deployment would keep this internal and add auth.
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  invoice-service:
+    build: ./invoice-service
+    environment:
+      PORT: 8081
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  performance-monitor:
+    build: ./performance-monitor
+    environment:
+      PORT: 8082
+    # The C service reads /proc/stat. Inside a container that's the
+    # container's own /proc by default, which is fine for the demo.
+    # If you want the host's CPU, uncomment the bind mount below.
+    # volumes:
+    #   - /proc:/host/proc:ro
+
+  health-node:
+    build: ./health-node
+    environment:
+      PORT: 8083
+      INVOICE_HEALTH_URL: http://invoice-service:8081/health
+      PERFORMANCE_HEALTH_URL: http://performance-monitor:8082/health
+      CHECK_INTERVAL_SECONDS: 5
+    depends_on:
+      invoice-service:
+        condition: service_started
+      performance-monitor:
+        condition: service_started
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      MONGODB_URI: mongodb://mongo:27017/micro_logs
+      INVOICE_SERVICE_URL:     http://invoice-service:8081
+      PERFORMANCE_MONITOR_URL: http://performance-monitor:8082
+      HEALTH_NODE_URL:         http://health-node:8083
+      PROXY_TIMEOUT_MS: 5000
+    depends_on:
+      mongo:
+        condition: service_healthy
+      invoice-service:
+        condition: service_started
+      performance-monitor:
+        condition: service_started
+      health-node:
+        condition: service_started
+
+volumes:
+  mongo_data:
