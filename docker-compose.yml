@@ -54,6 +54,7 @@ services:
     build: ./health-node
     environment:
       PORT: 8083
+      GATEWAY_HEALTH_URL: http://api-gateway:8080/health
       INVOICE_HEALTH_URL: http://invoice-service:8081/health
       PERFORMANCE_HEALTH_URL: http://performance-monitor:8082/health
       CHECK_INTERVAL_SECONDS: 5
@@ -82,6 +83,20 @@ services:
       performance-monitor:
         condition: service_started
       health-node:
+        condition: service_started
+
+  status-dashboard:
+    build: ./status-dashboard
+    ports:
+      - "8090:8090"
+    environment:
+      PORT: 8090
+      GATEWAY_URL: http://api-gateway:8080
+      # Admin/failure-injection calls go straight to the invoice service —
+      # the gateway intentionally doesn't route /admin paths.
+      INVOICE_ADMIN_URL: http://invoice-service:8081
+    depends_on:
+      api-gateway:
         condition: service_started
 
 volumes:

@@ -88,18 +88,56 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Mongo request log (informational; the gateway logged everything we
-#    did above).
+# 4. Generate a burst of varied traffic so the request log is representative.
+#    The gateway logs every proxied request; firing a spread across all
+#    endpoints makes the log reflect real cross-service activity rather than
+#    a single call each.
 # ---------------------------------------------------------------------------
-step "4. Where the request log lives"
-explain "Every call you just made was logged by the gateway to MongoDB."
-explain "To see them, run either of these (won't run them here - they print"
-explain "ten documents and would clutter this output):"
+step "4. Generating a burst of traffic across all services"
+explain "Firing several requests at each endpoint through the gateway. Every one"
+explain "is logged to MongoDB by the gateway, so the log below will show a"
+explain "balanced spread instead of one lonely entry per service."
+BURST=5
+for i in $(seq 1 ${BURST}); do
+  curl -s -o /dev/null "${GATEWAY}/generate?name=Burst%20${i}"
+  curl -s -o /dev/null "${GATEWAY}/metrics"
+  curl -s -o /dev/null "${GATEWAY}/status"
+  curl -s -o /dev/null "${GATEWAY}/example"
+  printf "."
+done
 echo
-echo "  docker compose exec mongo mongosh micro_logs --quiet --eval \\"
-echo "    'db.logs.find().sort({timestamp:-1}).limit(10).pretty()'"
+result "Sent ${BURST} rounds across /generate, /metrics, /status, and /example."
+
+# Give the gateway's fire-and-forget log writes a moment to land in Mongo.
+sleep 1
+
+# ---------------------------------------------------------------------------
+# 5. Show the request log straight from Mongo — counts per routed path.
+# ---------------------------------------------------------------------------
+step "5. The request log in MongoDB"
+explain "Querying Mongo directly for how many requests the gateway logged per"
+explain "path. This proves the logging works across every service, not just one."
+
+# A compact aggregation: group the logged requests by the routed service
+# (the gateway stores the clean path-without-query in the `service` field;
+# the `path` field holds the full URL including query string, so we group by
+# `service` to get clean per-endpoint counts).
+MONGO_QUERY='db.logs.aggregate([
+  { $group: { _id: "$service", count: { $sum: 1 } } },
+  { $sort: { count: -1 } }
+]).forEach(function(d){ print("  " + d._id + "  ->  " + d.count + " requests"); })'
+
+if docker compose exec -T mongo mongosh micro_logs --quiet --eval "${MONGO_QUERY}" 2>/dev/null; then
+  result "Counts above come straight from the gateway's MongoDB request log."
+else
+  fail "Couldn't query Mongo automatically. You can still run it by hand:"
+  echo "  docker compose exec mongo mongosh micro_logs --quiet --eval \\"
+  echo "    'db.logs.find().sort({timestamp:-1}).limit(10).pretty()'"
+fi
 echo
-echo "  Or open MongoDB Compass at mongodb://localhost:27017"
+explain "For full documents: docker compose exec mongo mongosh micro_logs --quiet \\"
+explain "  --eval 'db.logs.find().sort({timestamp:-1}).limit(10).pretty()'"
+explain "Or open MongoDB Compass at mongodb://localhost:27017"
 
 # ---------------------------------------------------------------------------
 # Summary
@@ -108,6 +146,6 @@ step "Summary"
 printf "  Invoice service:     ${green}OK${reset} (PDF at ./${PDF_OUT})\n"
 printf "  Performance monitor: ${green}OK${reset} (latest reading printed above)\n"
 printf "  Health node:         ${green}OK${reset} (snapshot printed above)\n"
-printf "  Gateway:             ${green}OK${reset} (all three calls routed through :8080)\n"
+printf "  Gateway:             ${green}OK${reset} (all calls routed through :8080, logged to Mongo)\n"
 echo
 echo "All four services responded through the gateway. The system works end-to-end."

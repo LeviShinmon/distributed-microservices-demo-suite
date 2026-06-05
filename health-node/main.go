@@ -82,18 +82,66 @@ func checkOne(name, url string, client *http.Client) ServiceHealth {
 	return row
 }
 
+// checkMongoViaGateway derives Mongo's health from the gateway's /health
+// response, which includes a `logs_ready` flag indicating whether the gateway's
+// own Mongo connection is alive. Mongo isn't an HTTP service we can GET directly,
+// so rather than add a Mongo driver to this service, we trust the gateway's
+// report of its own dependency. This mirrors a common real-world pattern:
+// services report the health of their dependencies, and the monitor aggregates.
+func checkMongoViaGateway(gatewayHealthURL string, client *http.Client) ServiceHealth {
+	now := time.Now().UTC().Format(time.RFC3339)
+	row := ServiceHealth{Name: "mongo", URL: gatewayHealthURL, LastChecked: now}
+
+	resp, err := client.Get(gatewayHealthURL)
+	if err != nil {
+		// Can't reach the gateway, so we genuinely don't know Mongo's state.
+		row.Healthy = false
+		row.LastError = "unknown — gateway unreachable: " + err.Error()
+		return row
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Status    string `json:"status"`
+		LogsReady bool   `json:"logs_ready"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		row.Healthy = false
+		row.LastError = "could not parse gateway health response"
+		return row
+	}
+
+	row.Healthy = body.LogsReady
+	if !body.LogsReady {
+		row.LastError = "gateway reachable, but its Mongo connection is not ready"
+	}
+	return row
+}
+
 // pollLoop checks every service once per interval and updates `state`.
-func pollLoop(targets []ServiceHealth, interval time.Duration) {
+// The gatewayHealthURL is used for the derived Mongo check (Mongo's health is
+// read from the gateway's logs_ready flag rather than checked directly).
+func pollLoop(targets []ServiceHealth, gatewayHealthURL string, interval time.Duration) {
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	for {
-		results := make([]ServiceHealth, len(targets))
+		// One row per HTTP target, plus one derived Mongo row.
+		results := make([]ServiceHealth, 0, len(targets)+1)
 		allHealthy := true
-		for i, t := range targets {
-			results[i] = checkOne(t.Name, t.URL, client)
-			if !results[i].Healthy {
+
+		for _, t := range targets {
+			row := checkOne(t.Name, t.URL, client)
+			results = append(results, row)
+			if !row.Healthy {
 				allHealthy = false
 			}
+		}
+
+		// Derived Mongo health (via the gateway's logs_ready).
+		mongoRow := checkMongoViaGateway(gatewayHealthURL, client)
+		results = append(results, mongoRow)
+		if !mongoRow.Healthy {
+			allHealthy = false
 		}
 
 		stateMu.Lock()
@@ -137,12 +185,15 @@ func main() {
 	port := envOr("PORT", "8083")
 	intervalSec := envInt("CHECK_INTERVAL_SECONDS", 5)
 
+	gatewayHealthURL := envOr("GATEWAY_HEALTH_URL", "http://localhost:8080/health")
+
 	targets := []ServiceHealth{
+		{Name: "api-gateway",         URL: gatewayHealthURL},
 		{Name: "invoice-service",     URL: envOr("INVOICE_HEALTH_URL",     "http://localhost:8081/health")},
 		{Name: "performance-monitor", URL: envOr("PERFORMANCE_HEALTH_URL", "http://localhost:8082/health")},
 	}
 
-	go pollLoop(targets, time.Duration(intervalSec)*time.Second)
+	go pollLoop(targets, gatewayHealthURL, time.Duration(intervalSec)*time.Second)
 
 	http.HandleFunc("/status", statusHandler)
 	http.HandleFunc("/health", healthHandler)

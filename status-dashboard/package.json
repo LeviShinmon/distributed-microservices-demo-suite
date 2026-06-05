@@ -1,0 +1,12 @@
+{
+  "name": "status-dashboard",
+  "version": "1.0.0",
+  "description": "Live status dashboard for the Distributed Microservices Demo Suite. Serves a browser page that reads the suite's own health endpoints and can inject simulated failures.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

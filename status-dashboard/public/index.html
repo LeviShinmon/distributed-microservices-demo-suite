@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Service Status · Microservices Demo Suite</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --fg: #e6edf3;
+    --fg-dim: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --grey: #6e7681;
+    --amber: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    line-height: 1.5;
+    padding: 32px 20px 64px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .sub { color: var(--fg-dim); font-size: 13px; margin-bottom: 24px; }
+
+  .banner {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    font-size: 15px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .banner.ok       { border-left: 4px solid var(--green); }
+  .banner.degraded { border-left: 4px solid var(--red); }
+  .banner.unknown  { border-left: 4px solid var(--grey); }
+  .banner .meta { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--fg-dim); }
+
+  .cards { display: grid; gap: 10px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+  .dot.up      { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.down    { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+  .dot.unknown { background: var(--grey); }
+  .card-name { font-weight: 500; }
+  .card-note { color: var(--fg-dim); font-size: 12px; margin-left: 4px; }
+  .card-meta { margin-left: auto; color: var(--fg-dim); font-size: 11px; text-align: right; }
+
+  .controls {
+    margin-top: 28px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 18px;
+  }
+  .controls h2 { font-size: 13px; color: var(--amber); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .controls p { color: var(--fg-dim); font-size: 12px; margin-bottom: 14px; }
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--fg);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:hover { border-color: var(--fg-dim); }
+  button.danger:hover  { border-color: var(--red); color: var(--red); }
+  button.restore:hover { border-color: var(--green); color: var(--green); }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .hint {
+    margin-top: 18px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .hint code {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Service Status</h1>
+  <div class="sub">Distributed Microservices Demo Suite · live health, refreshed every few seconds</div>
+
+  <div id="banner" class="banner unknown">
+    <span>Connecting…</span>
+    <span class="meta" id="bannerMeta"></span>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="controls">
+    <h2>Failure injection (demo)</h2>
+    <p>
+      Tell the invoice service to <em>report itself unhealthy</em>. The process keeps
+      running — it just fails its health check, so the health node and this dashboard
+      treat it as down. Watch the invoice card flip red within a refresh cycle, then restore it.
+    </p>
+    <button id="toggleBtn" class="danger" type="button">simulate invoice-service failure</button>
+  </div>
+
+  <div class="hint">
+    You can also take a service down for real from a terminal:<br>
+    <code>docker compose stop invoice-service</code> — then <code>docker compose start invoice-service</code> to bring it back.
+  </div>
+</div>
+
+<script>
+  const REFRESH_MS = 4000;
+  let simulatedDown = false;
+
+  const cardsEl = document.getElementById("cards");
+  const bannerEl = document.getElementById("banner");
+  const bannerMetaEl = document.getElementById("bannerMeta");
+  const toggleBtn = document.getElementById("toggleBtn");
+
+  function dotClass(card) {
+    if (!card.reachable) return "unknown";
+    return card.healthy ? "up" : "down";
+  }
+
+  function render(data) {
+    // Banner
+    if (data.cards.every((c) => !c.reachable)) {
+      bannerEl.className = "banner unknown";
+      bannerEl.firstElementChild.textContent = "Gateway unreachable — is the stack running?";
+    } else if (data.overallHealthy) {
+      bannerEl.className = "banner ok";
+      bannerEl.firstElementChild.textContent = "All systems operational";
+    } else {
+      bannerEl.className = "banner degraded";
+      bannerEl.firstElementChild.textContent =
+        `Degraded — ${data.downCount} of ${data.total} not healthy`;
+    }
+    bannerMetaEl.textContent = "updated " + new Date(data.generatedAt).toLocaleTimeString();
+
+    // Cards
+    cardsEl.innerHTML = "";
+    for (const card of data.cards) {
+      const row = document.createElement("div");
+      row.className = "card";
+      const note = card.note ? `<span class="card-note">${card.note}</span>` : "";
+      const meta = card.lastChecked
+        ? `<span class="card-meta">checked ${new Date(card.lastChecked).toLocaleTimeString()}</span>`
+        : "";
+      row.innerHTML =
+        `<span class="dot ${dotClass(card)}"></span>` +
+        `<span class="card-name">${card.name}</span>${note}${meta}`;
+      cardsEl.appendChild(row);
+    }
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("/api/health");
+      const data = await res.json();
+      render(data);
+    } catch (_) {
+      bannerEl.className = "banner unknown";
+      bannerEl.firstElementChild.textContent = "Dashboard can't reach its own API.";
+    }
+  }
+
+  function setButton() {
+    if (simulatedDown) {
+      toggleBtn.textContent = "restore invoice-service";
+      toggleBtn.className = "restore";
+    } else {
+      toggleBtn.textContent = "simulate invoice-service failure";
+      toggleBtn.className = "danger";
+    }
+  }
+
+  toggleBtn.addEventListener("click", async () => {
+    toggleBtn.disabled = true;
+    const endpoint = simulatedDown ? "/api/invoice/simulate-up" : "/api/invoice/simulate-down";
+    try {
+      await fetch(endpoint, { method: "POST" });
+      simulatedDown = !simulatedDown;
+      setButton();
+      poll(); // refresh immediately so the change shows without waiting
+    } catch (_) {
+      // leave state as-is; next poll will reflect reality
+    } finally {
+      toggleBtn.disabled = false;
+    }
+  });
+
+  setButton();
+  poll();
+  setInterval(poll, REFRESH_MS);
+</script>
+</body>
+</html>
