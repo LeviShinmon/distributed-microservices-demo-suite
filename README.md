@@ -1,6 +1,6 @@
 # Distributed Microservices Demo Suite
 
-This project demos a system built as independent but interconnected services.
+This project demos a system built as independent but interconnected services. 
 
 ## The Microservices
 
