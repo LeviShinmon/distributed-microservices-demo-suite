@@ -26,6 +26,13 @@ app = Flask(__name__)
 
 PORT = int(os.getenv("PORT", "8081"))
 
+# --- Failure injection (for the status dashboard demo) ----------------------
+# When True, /health reports the service as unhealthy even though the process
+# is still running. This lets the dashboard demonstrate detection and recovery
+# without actually killing anything. It's a deliberate, clearly-labeled
+# simulation — a tiny chaos-engineering / readiness-probe testing hook.
+SIMULATED_DOWN = False
+
 
 def _latin1_safe(s: str) -> str:
     """fpdf 1.x can only encode Latin-1 characters. Replace common Unicode
@@ -294,7 +301,39 @@ def example():
 
 @app.route("/health")
 def health():
+    # Respect the failure-injection flag so the dashboard can demonstrate a
+    # service going "down" and recovering. When simulated down, report 503 —
+    # the same shape a real unhealthy service would, so the health node and
+    # dashboard treat it identically to a genuine outage.
+    if SIMULATED_DOWN:
+        return jsonify(status="unhealthy", simulated=True), 503
     return jsonify(status="ok"), 200
+
+
+# --- Admin: failure injection ----------------------------------------------
+# These flip the simulated-failure flag. Kept deliberately simple for the demo.
+# In a real system these would be auth-gated and probably behind a separate
+# admin port; here they're open because the whole suite is a local demo.
+
+@app.route("/admin/simulate-down", methods=["POST"])
+def simulate_down():
+    global SIMULATED_DOWN
+    SIMULATED_DOWN = True
+    return jsonify(simulated_down=True), 200
+
+
+@app.route("/admin/simulate-up", methods=["POST"])
+def simulate_up():
+    global SIMULATED_DOWN
+    SIMULATED_DOWN = False
+    return jsonify(simulated_down=False), 200
+
+
+@app.route("/admin/state")
+def admin_state():
+    # Lets the dashboard show the current toggle state (so the button can read
+    # "simulate failure" vs "restore" correctly even after a page refresh).
+    return jsonify(simulated_down=SIMULATED_DOWN), 200
 
 
 if __name__ == "__main__":
